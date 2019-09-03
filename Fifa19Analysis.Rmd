@@ -424,3 +424,7 @@ The random forest, as did the MLR model, indicates that ```Reactions``` and ```D
 ## Conclusion
 
 An MLR and random forest regression model were compared for their predictive powers.  The MLR built strikes a balance between predictive accuracy and explanability since it eliminates multicollinearity a with minimally sufficient number of predictor variables.  The random forest built doesn't provide a large margin of improvement over MLR, illustrating the power of linear regression modeling.  Nevertheless, both models infer that ```Reactions``` and ```Dribbling``` are the most important indicators of a player's success.  Further research can focus on modeling goal keepers separately with MLR or adding more variables to improve the current MLR predictive accuracy, hopefully without sacrificing explainability. 
+
+## Addendum
+
+The complete R Markdown code and the csv file used for this analysis can be found on my [Fifa19 Github repository](https://github.com/rhaz96/Fifa19){target="_blank"}.
