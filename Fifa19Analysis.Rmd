@@ -1,0 +1,426 @@
+---
+title: "Fifa 19 Player Rank Analysis"
+author: "Robert Hazell"
+output: 
+  html_document:
+    toc: true
+    toc_float: true
+    theme: cosmo
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(message = F, comment=NA)
+```
+
+```{r include=FALSE}
+library(tidyverse)
+library(stringr)
+library(randomForest)
+library(magrittr)
+library(purrr)
+options(scipen = 999)
+```
+
+## Introduction
+
+*FIFA* is a popular video game series by Electronic Arts, in which you can play as many club and national soccer teams. It also features various story and career modes that allow you to form custom teams with your favorite players or recruit the strongest players to create the best team. Each player has many statistics that measure things such as preferred foot, body type, and skills in passing, shooting, and goalkeeping, that all go into a player’s overall rating. 
+
+This analysis focuses on player data from *FIFA 19* to determine which player attributes are the most significant predictors for a player's overall ranking (```Overall```). The dataset used is available on Kaggle [here](https://www.kaggle.com/karangadiya/fifa19/version/4){target="_blank"}.  Multiple linear regression (MLR) and a random forest are compared for their predictive power, though MLR has the distinct advantage of providing estimates of each attribute's relative contribution to a player's ranking.
+
+## Data Profile
+
+As is often the case with Kaggle datasets, this data was relatively clean but certain variables (columns) are removed before analysis, some of which were statistics explained by ```Overall``` rather than the other way around, such as ```Wage``` and ```Release.Clause```.  In other words a player's ```Overall``` rank determines their ```Wage``` and ```Release.Clause```, not the other way around, so they cannot be predictors of ```Overall```.   The variable ```Potential``` serves more as a proxy of ```Overall``` (as described [here](https://fifacareermodetips.com/guides/understanding-potential/){target="_blank"}), so should also be removed from analysis.  Some columns have no bearing on the analysis, such as a player's name, photo, club, nationality, and jersey number. Other columns were positional ratings reported as two numbers with a plus sign in between (e.g., 87+3). Since the odd format makes the data hard to work with, and since we are only interested in evaluating players at the position they play, those columns will be excluded. Lastly, the dataset includes a variable named ```Special``` that doesn't have a definition on either Kaggle or the FIFA website, so it's also excluded from analysis.
+
+```{r include=FALSE}
+setwd("~/Desktop/SMU/AppliedStats/Project1")
+fifa <- read.csv("data.csv", na.strings = c("", "NA"))
+fifa <- fifa[, c(2:4,6,8:10,12:19,22,28,55:89)]
+```
+
+## Data cleaning
+
+Not much needs doing here other than some cosmetic revisions and data type conversion from factor to numeric (or vice-versa).
+
+```{r include=FALSE}
+# removing / from Work.Rate column
+library(stringr)
+fifa$Work.Rate <- str_remove(fifa$Work.Rate, "/ ")
+```
+
+```{r include=FALSE}
+# collapse LowLow work rate to LowMedium to prevent aliasing in the regression model
+fifawr <- gsub("LowLow","LowMedium",fifa$Work.Rate)
+fifa <- fifa[,-15]
+fifa$Work.Rate <- fifawr
+fifa$Work.Rate %<>% factor(.)
+
+fifa$International.Reputation <- as.factor(fifa$International.Reputation)
+fifa$Weak.Foot <- as.factor(fifa$Weak.Foot)
+fifa$Work.Rate <- as.factor(fifa$Work.Rate)
+fifa$Skill.Moves <- as.factor(fifa$Skill.Moves)
+
+# remove "lbs" from Weight column
+fifa$Weight %<>% 
+  as.character(.) %>%
+  gsub("lbs","", .) %>%
+  as.numeric(.)
+```
+
+## Exploratory Data Analysis
+
+The most notable detail is the distinct separation for goalkeepers compared to the rest of positions.  Two examples --- ```Stamina``` and ```BallControl``` --- suffice to demonstrate this.  Goalkeepers have a much narrower range of player statistics since they're mainly confined to the goal and penalty areas, and exercise a limited range of motion compared to other players.  For these reasons, goalkeepers should be analyzed separately.
+
+```{r echo=FALSE, fig.height=3, fig.width=7}
+library(ggpubr)
+gk_plot <- function(x_var) {
+  fifa %>%
+  mutate(GoalKeeper = ifelse(Position == "GK","Yes","No")) %>%
+  na.omit() %>%
+  ggplot(aes_string(x_var, "Overall", col = "GoalKeeper")) + 
+    geom_point() +
+    labs(col = "Goal Keeper?")
+}
+
+p1 <- gk_plot("BallControl")
+p2 <- gk_plot("Stamina")
+ggarrange(p1,p2,ncol=2,common.legend = TRUE,legend = "right")
+```
+
+## Manual Variable Selection
+
+Importantly, manual selection *must* be done.  Automatic variable selection procedures like LASSO cannot remedy issues like multicollinearity or outliers. LASSO can inform but not replace human judgment in decision making!  Further, while the goal is prediction it's worthwhile choosing a model with low multicollinearity to preserve the usual interpretation of coefficients. This is in spite of the fact that multicollinearity isn't an issue if prediction is the only objective.  However, its presence obscures an explanatory variable's effect on the response variable since the x-variable would be related to other x-variables!   We can examine a correlation plot of some player characteristics.  If two predictors have an $|r| > 0.7$ they'll be considered collinear.
+
+```{r echo=FALSE, fig.height=12, fig.width=16}
+library(corrplot)
+clean <- na.omit(fifa[, c(16:50)])
+M <- cor(clean)
+corrplot(M, method = "number", number.cex = 0.75)
+```
+
+```{r echo=FALSE}
+# get the column numbers for variabes NOT correlated with Dribbling
+non_cor_ind <- c()
+for (i in 1:ncol(clean)) {
+  # arbitrarily use column 7 - Dribbling - as the baseline
+  if(abs(cor(clean[,i], clean[,7])) < .7) {
+    non_cor_ind <- append(non_cor_ind, i)}
+}
+
+# get corresponding column names for the above variables
+non_cor <- colnames(clean)[non_cor_ind]
+```
+
+```Dribbling``` is highly correlated to numerous other variables except for:
+
+* ```Weight```
+* ```HeadingAccuracy```
+* ```Reactions```
+* ```Balance```
+* ```Jumping```
+* ```Strength```
+* ```Stamina```
+* ```Aggression```
+* ```Interceptions```
+* ```Composure```
+* ```Marking```
+* ```StandingTackle```
+* ```SlidingTackle```
+
+Let's examine a correlation plot for those variables.
+
+```{r echo=FALSE}
+Q <- cor(na.omit(clean[,non_cor_ind]))
+corrplot(Q, "number", number.cex = 0.6)
+```
+
+Using ```Interceptions``` as the baseline, the following will be kept:
+
+* ```Weight```
+* ```HeadingAccuracy```
+* ```Reactions```
+* ```Balance```
+* ```Jumping```
+* ```Stamina```
+* ```Strength```
+* ```Composure```
+
+We choose to keep ```Interceptions``` for a couple reasons. First, it can be thought of as the result of the other variables (e.g., good tackling results in more interceptions). Second, it is a clear indicator of success or failure, instead of just a subjective measure of tackling ability or aggression.
+
+To summarize, these variables will be included in the baseline model:
+
+* ```Age```
+* ```Weight```
+* ```Dribbling```
+* ```Interceptions```
+* ```HeadingAccuracy```
+* ```Reactions```
+* ```Balance```
+* ```Jumping```
+* ```Stamina```
+* ```Strength```
+* ```Composure```
+* ```Preferred.Foot```
+* ```International.Reputation```
+* ```Work.Rate```
+* ```Position```
+
+## Predicting Overall Rating
+
+### Multiple Linear Regression (MLR)
+
+First, we'll recategorize the 27 total player positions to just 6:
+
+* Defenders (DF)
+* Defensive Midfielders (DM)
+* Midfielders (MF)
+* Attacking Midfielders (AM)
+* Strikers (ST)
+* Goalkeepers (GK)
+
+```{r echo=FALSE}
+fifa$Position %<>%
+  gsub("RB|LB|CB|LCB|RCB|RWB|LWB", "DF", .) %>% # Defenders
+  gsub("LDM|CDM|RDM", "DM", .) %>% # Defensive Midfielders
+  gsub("LM|LCM|CM|RCM|RM", "MF", .) %>% # Midfielders
+  gsub("LAM|CAM|RAM|LW|RW", "AM", .) %>% # Attacking Midfielders
+  gsub("RS|ST|LS|CF|LF|RF", "ST",. ) %>% # Strikers
+  factor(.)
+```
+
+The simplified player positions are adapted from [Nitin Datta's kernel](https://www.kaggle.com/nitindatta/fifa-in-depth-analysis-with-linear-regression){target="_blank"}. It's a useful but imperfect categorization that simplifies analysis and process time.  It's best to exclude goalkeepers given its different distribution relative to other positions.
+
+```{r echo=FALSE}
+fifa <- fifa[, -c(1,2,4,6:10,51)]
+# there's at most 60 NAs - remove them.
+fifa_nongk <- fifa[complete.cases(fifa), ] %>% filter(Position != "GK")
+```
+
+To compare the relative importance of each variable, the predictors need to be standardized since unit of measures differ (e.g., ```Age``` and ```Weight```). For a continuous predictor (column) each observation $x_i$ is subtracted by the column mean $\overline{x}$, the difference then divided by the column's standard deviation $sd(x)$, as shown in the formula below.
+
+$$\frac{x_i - \overline{x}}{sd(x)}$$
+While it's standard (pun intended) to perform this calculation on both (continuous) predictors and the response variable, standardizing just the predictors keeps the response variable in its original units.  Check the University of Notre Dame's [summary](https://www3.nd.edu/~rwilliam/stats1/x92b.pdf){target="_blank"} on standardizing variables and their interpretations.
+
+```{r echo=FALSE}
+library(purrr)
+# names of the continuous predictors to standardize
+col_names <- c("Age", "Weight","Dribbling","Interceptions","HeadingAccuracy","Reactions","Balance","Jumping","Stamina","Strength","Composure")
+# find the corresponding column numbers
+col_nums <- match(col_names, colnames(fifa))
+# apply standardization formula, then append the relevant categorical predictors to the dataframe
+fifa_standardized <- map_df(fifa_nongk[, col_nums], function(x) (x-mean(x))/sd(x)) %>% 
+  cbind(., fifa_nongk$Work.Rate, fifa_nongk$Position, fifa_nongk$Overall)
+# change the column names of the categorical predictors
+colnames(fifa_standardized)[12:14] <- c("Work.Rate", "Position", "Overall")
+```
+
+```{r echo=FALSE}
+set.seed(5638)
+# 80-20 data split.
+smp_size <- floor(0.8 * nrow(fifa_standardized)) 
+index<-sample(1:nrow(fifa_standardized),size = smp_size,replace=F) 
+fifa_train<-fifa_standardized[index,]
+rownames(fifa_train) <- NULL
+fifa_test<-fifa_standardized[-index,]
+```
+
+```{r echo=FALSE}
+fifa.model <- lm(Overall ~ ., data = fifa_train)
+```
+
+```{r echo=FALSE}
+car::Anova(fifa.model, type = "III")
+```
+
+All variables except ```Age``` and ```Jumping``` are highly significant. To assess this model's quality, we examine how well it aligns with linear regression assumptions.
+
+### Assumption Checking
+
+```{r echo=FALSE}
+par(mfrow = c(2,2))
+plot(fifa.model)
+```
+
+Residuals appear to be normally distributed with constant variance, demonstrated in the QQ plot and Residuals vs Fitted plots. There are no problematic leverage or influential points in the Residuals vs Leverage plot. With large datasets, it's not uncommon to see ~ 5% of data fall outside 3 standard deviations, so observations near $\pm$ 4 standard deviations in the Residuals vs Leverage plot are not necessarily problematic. Since this is cross-sectional data from a single season, we do not have to worry about serial correlation. Clustering could be an issue given that players on the same team can help or hurt each other’s statistics. Nevertheless, independence is assumed for this analysis.
+
+### Examining Potential Multicollinearity
+
+```{r echo=FALSE}
+library(car)
+car::vif(fifa.model)
+```
+
+GVIF is used instead of VIF when more than two levels exist for a (categorical) variable, or if a quadratic term exists. This is the case with the Fifa data --- for example ```Work.Rate``` has 8 levels (categories), or 7 degrees of freedom.  GVIF reduces to the VIF for continuous predictors.   Squaring the second column of this output corresponds to the normal VIF for continuous predictors.  See Section 4.5 of [Practical Econometrics](http://web.vu.lt/mif/a.buteikis/wp-content/uploads/PE_Book/4-5-Multiple-collinearity.html){target="_blank"} for more details.  All GVIF values are moderately low, evidence that the MLR model doesn't suffer from multicollinearity.  
+
+### MLR Analysis
+
+Here's the coefficient summary for the MLR model.
+
+```{r echo=FALSE}
+summary(fifa.model)
+```
+
+An interesting result is that a player's ```Age``` isn't a significant predictor when all other model variables are accounted for, suggesting that skill takes precedence.  There's not enough evidence to suggest ```Jumping``` skills are beneficial either, which makes sense given that soccer is concerned more with kicking and running.  The most-likely exception to this is goalkeepers - who jump quite often - which were not included in the model.  
+
+The ```Work.Rate``` baseline category is ```HighHigh```.  Compared to it, the most effective ```Work.Rate```s appear to be high on attack and low on defense, and low on attack and high on defense, suggesting players are better off specializing in one area rather than both.
+
+The ```Position``` baseline category is ```PositionAM``` (equivalently, Attacking Midfielders).  Compared to them, only defenders (```PositionDF```) fare better.
+
+Overall, the most important quantitative variables affecting ```Overall``` score are ```Dribbling``` and ```Reactions```.  Dribbling is [defined](https://www.fifplay.com/encyclopedia/player-attribute-dribbling/){target="_blank"} as "a player's ability to carry the ball and past an opponent while being in control".  Reactions is [defined](https://www.fifplay.com/encyclopedia/player-attribute-reactions/){target="_blank"} as a player's speed in responding to events and situations around them.  These characteristics agree with our intuition on what makes a great soccer player.  One can even argue that, taken together, these two variables encompass the other skills-based variables. 
+
+### Parameter Interpretation
+
+One strength of linear regression models is their high interpretability, so this should be taken advantage of.  Here is a template for interpreting the variable from the MLR model.  The y-intercept has no logical meaning for this analysis (can someone be 0 yrs old and weigh 0kg ?).  
+
+**For the continuous variables ```Age``` through ```Composure``` the construct looks like this**:
+
+* An increase of one *standard deviation* in ```Weight``` is associated with a mean increase in ```Overall``` score of 0.22, holding all other variables constant.
+
+Another way to phase this is:
+
+* A 14.81 kg increase in ```Weight``` is associated with a mean increase in ```Overall``` score of 0.22, holding all other variables constant.
+
+or 
+
+* A 1 kg increase in ```Weight``` is associated with a mean increase in ```Overall``` score of 0.0149, holding all other variables constant.
+
+The standard deviation of ```Weight``` in the dataset is 14.80742, or ~ 14.81.  In keeping with the usual interpretation in regression ("a one unit increase..."), we can divide 0.22 by 14.81.
+
+**For ```Work.Rate``` the construct looks like this**:
+
+* Relative to players with ```HighHigh``` profiles, players with ```HighLow``` profiles are expected to have a mean increase in ```Overall``` score of 1.09, holding all other variables constant.
+
+**For ```Position``` the construct looks like this**:
+
+* Relative to attacking midfielders (```AM```), defenders (```DM```) are expected to have a mean increase in ```Overall``` score of 0.32, holding all other variables constant.
+
+95% confidence intervals are easily obtained.
+
+```{r echo=FALSE}
+confint(fifa.model)
+```
+
+Taking ```Stamina``` as an example, the interpretation is: we're 95% confident that the true value of ```Stamina```'s coefficient, using standardized data, lies between 0.316 and 0.436.
+
+### Test set results
+
+The predicted values and actual values for the test set have approximately 91% correlation, which suggests a relatively good fit.
+
+```{r include=FALSE}
+# correlation of predicted and actual values
+overall_predict <- round(predict(fifa.model, fifa_test))
+actuals <- fifa_test$Overall
+cor(overall_predict,actuals)
+```
+
+```{r echo=FALSE}
+# combine predicted and actual values for test set
+test_results <- data.frame(Actual = fifa_test$Overall, 
+                           Predicted = overall_predict)
+# plot predicted vs actual
+ggplot(test_results, aes(Actual,Predicted)) + 
+  geom_jitter() + # geom_jitter removes some of the point overlaps
+  ggtitle("MLR Test Set Performance for Overall Player Rating") + 
+  theme(plot.title = element_text(hjust = .5)) + 
+  ylab("Predicted Rating")+
+  xlab("Actual Rating")
+```
+
+```{r include=FALSE}
+# test set R-squared value
+(cor(fifa_test$Overall,overall_predict))^2
+```
+
+```{r include=FALSE}
+# training set RMSE
+sqrt(mean((round(fifa.model$fitted.values) - fifa_train$Overall)^2))
+```
+
+```{r include=FALSE}
+# test set RMSE
+sqrt(mean((overall_predict - fifa_test$Overall)^2))
+```
+
+```{r include=FALSE}
+# training set mean absolute percent error (MAPE)
+
+# gather the actual and predicted training set values
+fifa_mlr_values <- data.frame(Actual = fifa_train$Overall,
+                              Preds = round(fifa.model$fitted.values))
+
+# calculate MAPE
+mean(abs(fifa_mlr_values$Actual - fifa_mlr_values$Preds) / abs(fifa_mlr_values$Actual))
+```
+
+```{r include=FALSE}
+# test set MAPE
+mean(abs(test_results$Actual - test_results$Predicted) / abs(test_results$Actual))
+```
+
+To summarize the results:
+
+* Adj $R^{2}$ (Training Set) = 84.2%
+* Adj $R^{2}$ (Test Set) = 83.7%
+* RMSE (Training Set) = 2.71
+* RMSE (Test Set) = 2.73
+* MAPE (Training Set) = 3.3%
+* MAPE (Test Set) = 3.3%
+
+For prediction, RMSE and MAPE are the more relevant metrics.  RMSE is used for providing [prediction intervals](http://www-stat.wharton.upenn.edu/~stine/stat621/lecture3.621.pdf){target="_blank"} that quantify how the margin of error of a predicted value.  For large samples, a 95% prediction interval (PI) takes the form $\hat y \pm 2*RMSE$, where $\hat y$ is predicted value from the regression model.  For the MLR model, the margin of error for a 95% PI is $2*2.73 = 5.46$.  If for example we predict a player's ```Overall``` to be 75, the lower bound is 65 and the upper bound 75 --- rounding to the nearest whole number since *FIFA* scores are integer values.
+
+The MAPE quantifies how off the predictions were from the actual values.  The MLR model implies an accuracy of ~ 97%. So while point predictions are accurate, the margin or error might be a bit wide.
+
+## Improving Prediction with a random forest
+
+Earlier it was mentioned goalkeepers were excluded from the MLR model due to their distinct pattern from the rest of positions.  A decision tree can easily handle such abnormalities and non-linearity since it isn't forced to conform to linear assumptions about the data. We will try improving the accuracy of our predictions (lowering the RMSE) by using a random forest, an ensemble of decision trees.  
+
+```{r include=FALSE}
+# 80-20 training and test set split
+set.seed(5811)
+fifa <- fifa[complete.cases(fifa), ]
+smp_size <- floor(0.8 * nrow(fifa)) 
+index<-sample(1:dim(fifa)[1],size = smp_size,replace=F) 
+fifa2_train<-fifa[index,]
+fifa2_test<-fifa[-index,]
+```
+
+We use a random forest of 250 trees (250 bootstrapped samples). Standardization isn't necessary for random forests because, as this Stack Overflow [post](https://stackoverflow.com/questions/8961586/do-i-need-to-normalize-or-scale-data-for-randomforest-r-package){target="_blank"} explains, they don't have a similar metric for *explaining* the relationship between a predictor and response variable as do MLR models, namely the coefficients.  The one metric included in random forest output is *Importance*, measuring how much each predictor reduces the residual sum of squares (SSR).
+
+```{r include=FALSE}
+# random forest using default mtry
+fifa_rf <- randomForest(Overall ~ Age+Weight+Dribbling+Interceptions+HeadingAccuracy+Reactions+Balance+Jumping+Stamina+Strength+Composure+Work.Rate+Position, data = fifa2_train, ntree=250,importance=TRUE)
+# predictions on test set
+overall.rf <- round(predict(fifa_rf, fifa2_test))
+# RMSE on test set
+sqrt(mean((overall.rf-fifa2_test$Overall)^2))
+# RMSE on training set
+sqrt(fifa_rf$mse[250])
+# R squared from training set
+fifa_rf$rsq[250]
+# R squared from test set
+1 - sum((fifa2_test$Overall-overall.rf)^2)/sum((fifa2_test$Overall-mean(fifa2_test$Overall))^2)
+# MAPE(training set)
+mean(abs(fifa2_train$Overall - round(fifa_rf$predicted)) / abs(fifa2_train$Overall))
+# MAPE (test set)
+mean(abs(fifa2_test$Overall - overall.rf) / abs(fifa2_test$Overall))
+```
+
+Here's a summary of the results:
+
+* $R^{2}$ (training set) = 90.1%
+* $R^{2}$ (test set) = 90.3%
+* RMSE (training set) = 2.17
+* RMSE (test set) = 2.20
+* MAPE (training set) = 2.5%
+* MAPE (test set) = 2.5%
+
+A random forest better captures the variability in the data, even with the goalkeepers included, by approximately 6 percentage points.  The RMSE decreases modestly, but not by much (2.71 to 2.20).  We have to keep in mind, however, that the MLR model didn't include goalkeepers.  If goalkeepers are removed, the test set RMSE for the random forest decreases to ~ 1.9.   
+
+```{r echo=FALSE}
+fifa_rf$importance
+```
+
+The random forest, as did the MLR model, indicates that ```Reactions``` and ```Dribbling``` are the most important indicators of a player's ```Overall``` score.  
+
+## Conclusion
+
+An MLR and random forest regression model were compared for their predictive powers.  The MLR built strikes a balance between predictive accuracy and explanability since it eliminates multicollinearity a with minimally sufficient number of predictor variables.  The random forest built doesn't provide a large margin of improvement over MLR, illustrating the power of linear regression modeling.  Nevertheless, both models infer that ```Reactions``` and ```Dribbling``` are the most important indicators of a player's success.  Further research can focus on modeling goal keepers separately with MLR or adding more variables to improve the current MLR predictive accuracy, hopefully without sacrificing explainability. 
