@@ -269,7 +269,7 @@ Overall, the most important quantitative variables affecting ```Overall``` score
 
 ### Parameter Interpretation
 
-One strength of linear regression models is their high interpretability, so this should be taken advantage of.  Here is a template for interpreting the variable from the MLR model.  The y-intercept has no logical meaning for this analysis (can someone be 0 yrs old and weigh 0kg ?).  
+One strength of linear regression models is their high interpretability, so this should be taken advantage of.  Here is a template for interpreting the variables from the MLR model.  The y-intercept has no logical meaning for this analysis (can someone be 0 yrs old and weigh 0kg ?).  
 
 **For the continuous variables ```Age``` through ```Composure``` the construct looks like this**:
 
