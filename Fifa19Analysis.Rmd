@@ -365,7 +365,7 @@ To summarize the results:
 * MAPE (Training Set) = 3.3%
 * MAPE (Test Set) = 3.3%
 
-For prediction, RMSE and MAPE are the more relevant metrics.  RMSE is used for providing [prediction intervals](http://www-stat.wharton.upenn.edu/~stine/stat621/lecture3.621.pdf){target="_blank"} that quantify how the margin of error of a predicted value.  For large samples, a 95% prediction interval (PI) takes the form $\hat y \pm 2*RMSE$, where $\hat y$ is predicted value from the regression model.  For the MLR model, the margin of error for a 95% PI is $2*2.73 = 5.46$.  If for example we predict a player's ```Overall``` to be 75, the lower bound is 65 and the upper bound 75 --- rounding to the nearest whole number since *FIFA* scores are integer values.
+For prediction, RMSE and MAPE are the more relevant metrics.  RMSE is used for providing [prediction intervals](http://www-stat.wharton.upenn.edu/~stine/stat621/lecture3.621.pdf){target="_blank"} that quantify how the margin of error of a predicted value.  For large samples, a 95% prediction interval (PI) takes the form $\hat y \pm 2*RMSE$, where $\hat y$ is predicted value from the regression model.  For the MLR model, the margin of error for a 95% PI is $2*2.73 = 5.46$.  If for example we predict a player's ```Overall``` to be 75, the lower bound is 75-5.46=70 and the upper bound is 75+5.46=80 --- rounding to the nearest whole number since *FIFA* scores are integer values.
 
 The MAPE quantifies how off the predictions were from the actual values.  The MLR model implies an accuracy of ~ 97%. So while point predictions are accurate, the margin or error might be a bit wide.
 
