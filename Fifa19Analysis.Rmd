@@ -365,7 +365,7 @@ To summarize the results:
 * MAPE (Training Set) = 3.3%
 * MAPE (Test Set) = 3.3%
 
-For prediction, RMSE and MAPE are the more relevant metrics.  RMSE is used for providing [prediction intervals](http://www-stat.wharton.upenn.edu/~stine/stat621/lecture3.621.pdf){target="_blank"} that quantify how the margin of error of a predicted value.  For large samples, a 95% prediction interval (PI) takes the form $\hat y \pm 2*RMSE$, where $\hat y$ is predicted value from the regression model.  For the MLR model, the margin of error for a 95% PI is $2*2.73 = 5.46$.  If for example we predict a player's ```Overall``` to be 75, the lower bound is 75-5.46=70 and the upper bound is 75+5.46=80 --- rounding to the nearest whole number since *FIFA* scores are integer values.
+For prediction, RMSE and MAPE are the more relevant metrics.  RMSE is used for providing [prediction intervals](http://www-stat.wharton.upenn.edu/~stine/stat621/lecture3.621.pdf){target="_blank"} that quantify the margin of error for a predicted value.  For large samples, a 95% prediction interval (PI) takes the form $\hat y \pm 2*RMSE$, where $\hat y$ is predicted value from the regression model.  For the MLR model, the margin of error for a 95% PI is $2*2.73 = 5.46$.  If for example we predict a player's ```Overall``` to be 75, the lower bound is 75-5.46=70 and the upper bound is 75+5.46=80 --- rounding to the nearest whole number since *FIFA* scores are integer values.
 
 The MAPE quantifies how off the predictions were from the actual values.  The MLR model implies an accuracy of ~ 97%. So while point predictions are accurate, the margin or error might be a bit wide.
 
@@ -423,7 +423,7 @@ The random forest, as did the MLR model, indicates that ```Reactions``` and ```D
 
 ## Conclusion
 
-An MLR and random forest regression model were compared for their predictive powers.  The MLR built strikes a balance between predictive accuracy and explanability since it eliminates multicollinearity a with minimally sufficient number of predictor variables.  The random forest built doesn't provide a large margin of improvement over MLR, illustrating the power of linear regression modeling.  Nevertheless, both models infer that ```Reactions``` and ```Dribbling``` are the most important indicators of a player's success.  Further research can focus on modeling goal keepers separately with MLR or adding more variables to improve the current MLR predictive accuracy, hopefully without sacrificing explainability. 
+An MLR and random forest regression model were compared for their predictive powers.  The MLR built strikes a balance between predictive accuracy and explanability since it eliminates multicollinearity for a minimally sufficient subset of predictor variables.  The random forest built doesn't provide a large margin of improvement over MLR, illustrating the power of linear regression modeling.  Nevertheless, both models infer that ```Reactions``` and ```Dribbling``` are the most important indicators of a player's success.  Further research can focus on modeling goal keepers separately with MLR or adding more variables to improve the current MLR predictive accuracy, hopefully without sacrificing explainability. 
 
 ## Addendum
 
